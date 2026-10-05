@@ -17,7 +17,7 @@ pnpm exec playwright install chromium    # navigateur pour `pnpm docs:login`
 pnpm uniquement : npm et yarn sont refusés.
 
 **Ubuntu** :
-- installez Chromium et ses bibliothèques système avec `pnpm exec playwright install --with-deps chromium` (demande `sudo`) ;
+- installez le navigateur et ses bibliothèques système avec `pnpm exec playwright install --with-deps chromium` (ou `firefox`, voir plus bas ; demande `sudo`) ;
 - `corepack: command not found` signifie que vous avez Node 25 ou plus, qui ne livre plus corepack. Si `pnpm --version` répond déjà, ignorez ce message ; sinon, installez corepack comme indiqué ci-dessous.
 
 Si `pnpm install` échoue avec `Cannot find module …/pnpm.cjs`, c'est que le corepack livré avec votre Node est trop ancien pour pnpm 12. À partir de Node 25, corepack n'est d'ailleurs plus livré du tout. Dans les deux cas, installez-le à part :
@@ -34,7 +34,11 @@ Docs utilise ProConnect : pas de connexion par mot de passe depuis un script. On
 pnpm docs:login
 ```
 
-Une fenêtre Chromium s'ouvre et vous vous connectez vous-même. Le cookie est ensuite enregistré dans `.env`. Le profil de navigateur est conservé dans `.auth/`, donc les reconnexions suivantes sont souvent immédiates.
+Une fenêtre de navigateur s'ouvre et vous vous connectez vous-même. Le cookie est ensuite enregistré dans `.env`. Le profil de navigateur est conservé dans `.auth/`, donc les reconnexions suivantes sont souvent immédiates.
+
+**Firefox plutôt que Chromium** : ajoutez `DOCS_BROWSER=firefox` dans `.env`, ou lancez `pnpm docs:login --browser firefox`. Il faut d'abord l'installer une fois : `pnpm exec playwright install firefox` (sous Ubuntu : `--with-deps`, qui installe aussi les bibliothèques système).
+- C'est le Firefox de Playwright, distinct de votre Firefox habituel : il n'en reprend ni la session, ni les réglages, ni les certificats ajoutés par votre organisation.
+- Le navigateur ne sert qu'à la connexion. `docs:sync` et `docs:search` appellent l'API directement depuis Node.
 
 Sinon, vous pouvez recopier le cookie à la main : DevTools → Application → Cookies → `docs_sessionid`, à mettre dans `.env` (voir `.env.example`).
 
@@ -49,7 +53,7 @@ export NO_PROXY=localhost,127.0.0.1
 
 Vous pouvez aussi mettre ces deux lignes dans `.env`, chargé au démarrage. Ce fichier n'est lisible que par vous et il est ignoré par git, ce qui convient si le proxy demande des identifiants. La configuration de proxy de pnpm (`pnpm config`) ne sert qu'à `pnpm install`.
 
-Le script transmet ce proxy à Chromium (`login`) et au `fetch` de Node (`sync`), car ni l'un ni l'autre ne le prennent d'eux-mêmes. Pour le `fetch`, il faut Node 24.14 ou plus. Avec un Node plus ancien, ajoutez `NODE_USE_ENV_PROXY=1`.
+Le script transmet ce proxy au navigateur de connexion (`login`, Chromium ou Firefox) et au `fetch` de Node (`sync`), car ni l'un ni l'autre ne le prennent d'eux-mêmes. Pour le `fetch`, il faut Node 24.14 ou plus. Avec un Node plus ancien, ajoutez `NODE_USE_ENV_PROXY=1`.
 
 ## Utilisation
 
@@ -94,6 +98,8 @@ Les liens entre documents Docs sont réécrits en liens relatifs, ce qui permet 
 | `DOCS_BASE_URL` | `https://docs.numerique.gouv.fr` |
 | `DOCS_DATA_DIR` | `./data` |
 | `DOCS_CONCURRENCY` | `4` |
+| `DOCS_BROWSER` | `chromium` (ou `firefox`) pour `docs:login` |
+| `HTTPS_PROXY`, `NO_PROXY` | proxy d'entreprise (voir plus haut) |
 
 ## Sécurité
 

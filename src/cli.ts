@@ -6,7 +6,7 @@ import { search, type SyncMode } from './search.ts';
 import { formatDate, listSnapshots, readManifest } from './snapshots.ts';
 
 const USAGE = `Usage :
-  pnpm docs:login                                   Connexion ProConnect, enregistre la session dans .env
+  pnpm docs:login [--browser chromium|firefox]       Connexion ProConnect, enregistre la session dans .env
   pnpm docs:sync <doc_id|url> [--force]             Télécharge le document et ses sous-documents (instantané daté)
   pnpm docs:search <doc_id|url> [--sync|--no-sync] <arguments ripgrep…>
                                                       Recherche ripgrep dans l'instantané du jour
@@ -20,8 +20,9 @@ async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
   switch (command) {
     case 'login': {
-      const { login } = await import('./login.ts');
-      await login();
+      const { login, parseBrowser } = await import('./login.ts');
+      const i = args.indexOf('--browser');
+      await login(parseBrowser(i >= 0 ? args[i + 1] : undefined));
       return 0;
     }
     case 'sync': {
