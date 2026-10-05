@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { getMe } from './api.ts';
 import { config, isValidSessionId, setEnvVar, UserError } from './config.ts';
+import { envProxy, playwrightProxy } from './proxy.ts';
 
 const PROFILE_DIR = resolve('.auth/profile');
 const TIMEOUT_MS = 5 * 60_000;
@@ -18,10 +19,15 @@ export async function login(): Promise<void> {
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: false,
     viewport: null,
+    proxy: playwrightProxy(),
   });
   try {
     const page = context.pages()[0] ?? (await context.newPage());
-    await page.goto(`${config.baseUrl}/`);
+    try {
+      await page.goto(`${config.baseUrl}/`);
+    } catch (e) {
+      throw new UserError(navigationHelp((e as Error).message));
+    }
     console.log('Connectez-vous dans la fenêtre qui vient de s\'ouvrir (5 min max)…');
 
     const deadline = Date.now() + TIMEOUT_MS;
@@ -47,4 +53,20 @@ export async function login(): Promise<void> {
   } finally {
     await context.close();
   }
+}
+
+/** Message d'aide quand Chromium n'arrive pas à ouvrir Docs. */
+function navigationHelp(message: string): string {
+  const error = message.match(/net::[A-Z_]+/)?.[0] ?? message.split('\n')[0];
+  const proxy = envProxy();
+  const lines = [`Impossible d'ouvrir ${config.baseUrl} dans Chromium (${error}).`];
+  if (/NAME_NOT_RESOLVED|PROXY|TUNNEL/.test(error)) {
+    lines.push(
+      proxy
+        ? `Proxy utilisé : ${proxy.url.protocol}//${proxy.url.host}. Vérifiez qu'il est joignable et qu'il autorise ce site.`
+        : 'Aucun proxy défini : si votre réseau en impose un, exportez HTTPS_PROXY (et NO_PROXY) puis relancez.',
+      `Diagnostic : getent hosts ${new URL(config.baseUrl).hostname} ; curl -sI ${config.baseUrl}/`,
+    );
+  }
+  return lines.join('\n');
 }
