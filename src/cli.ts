@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { relative } from 'node:path';
 import { parseDocId, UserError } from './config.ts';
+import { applyEnvProxyToFetch } from './proxy.ts';
 import { search, type SyncMode } from './search.ts';
 import { formatDate, listSnapshots, readManifest } from './snapshots.ts';
 
@@ -54,6 +55,8 @@ async function main(argv: string[]): Promise<number> {
       return command && !['-h', '--help', 'help'].includes(command) ? 1 : 0;
   }
 }
+
+applyEnvProxyToFetch();
 
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),

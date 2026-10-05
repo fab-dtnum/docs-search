@@ -16,6 +16,10 @@ pnpm exec playwright install chromium    # navigateur pour `pnpm docs:login`
 
 pnpm uniquement : npm et yarn sont refusés.
 
+**Ubuntu** :
+- installez Chromium et ses bibliothèques système avec `pnpm exec playwright install --with-deps chromium` (demande `sudo`) ;
+- `corepack: command not found` signifie que vous avez Node 25 ou plus, qui ne livre plus corepack. Si `pnpm --version` répond déjà, ignorez ce message ; sinon, installez corepack comme indiqué ci-dessous.
+
 Si `pnpm install` échoue avec `Cannot find module …/pnpm.cjs`, c'est que le corepack livré avec votre Node est trop ancien pour pnpm 12. À partir de Node 25, corepack n'est d'ailleurs plus livré du tout. Dans les deux cas, installez-le à part :
 
 ```bash
@@ -33,6 +37,19 @@ pnpm docs:login
 Une fenêtre Chromium s'ouvre et vous vous connectez vous-même. Le cookie est ensuite enregistré dans `.env`. Le profil de navigateur est conservé dans `.auth/`, donc les reconnexions suivantes sont souvent immédiates.
 
 Sinon, vous pouvez recopier le cookie à la main : DevTools → Application → Cookies → `docs_sessionid`, à mettre dans `.env` (voir `.env.example`).
+
+### Derrière un proxy (réseau d'entreprise)
+
+Une erreur `net::ERR_NAME_NOT_RESOLVED` au `pnpm docs:login` signifie en général que le réseau impose un proxy. Exportez-le avant de lancer les commandes :
+
+```bash
+export HTTPS_PROXY=http://proxy.exemple:3128   # identifiants éventuels : http://user:mdp@proxy:port
+export NO_PROXY=localhost,127.0.0.1
+```
+
+Vous pouvez aussi mettre ces deux lignes dans `.env`, chargé au démarrage. Ce fichier n'est lisible que par vous et il est ignoré par git, ce qui convient si le proxy demande des identifiants. La configuration de proxy de pnpm (`pnpm config`) ne sert qu'à `pnpm install`.
+
+Le script transmet ce proxy à Chromium (`login`) et au `fetch` de Node (`sync`), car ni l'un ni l'autre ne le prennent d'eux-mêmes. Pour le `fetch`, il faut Node 24.14 ou plus. Avec un Node plus ancien, ajoutez `NODE_USE_ENV_PROXY=1`.
 
 ## Utilisation
 
