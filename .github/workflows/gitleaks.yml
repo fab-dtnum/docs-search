@@ -1,0 +1,37 @@
+name: gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Jeton GitHub en lecture seule : la CI n'a rien à écrire.
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # Empreinte du binaire épinglée ici (et non lue dans la release) :
+      # une release modifiée après coup serait refusée.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tout l'historique est analysé
+          persist-credentials: false
+
+      # Binaire officiel plutôt que gitleaks-action (licence payante pour les organisations).
+      - name: Installer gitleaks
+        run: |
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${f}"
+          echo "${GITLEAKS_SHA256}  ${f}" | sha256sum -c -
+          tar -xzf "$f" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+
+      - name: Analyser l'historique
+        run: gitleaks git --redact --no-banner --verbose --config .gitleaks.toml .

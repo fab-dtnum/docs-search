@@ -95,6 +95,20 @@ Les liens entre documents Docs sont réécrits en liens relatifs, ce qui permet 
   - aucun script d'installation autorisé ;
   - versions exactes, sans `^` (voir `pnpm-workspace.yaml`).
 
+## Secrets (gitleaks)
+
+Prérequis : [gitleaks](https://github.com/gitleaks/gitleaks) (`brew install gitleaks`, ou binaire de la page des releases sous Ubuntu).
+
+- **Avant chaque commit**, le hook `.githooks/pre-commit` analyse les changements indexés et **refuse le commit** s'il trouve un secret. Il le refuse aussi si gitleaks n'est pas installé.
+  - `pnpm install` active ce hook (`git config core.hooksPath .githooks`).
+  - Dans un clone déjà installé, lancez `pnpm run prepare`.
+- **Règle propre au projet** dans `.gitleaks.toml` : elle détecte le cookie `docs_sessionid`, que les règles par défaut de gitleaks ne connaissent pas.
+- **`pnpm secrets:scan`** analyse tout l'historique git et les changements non commités.
+- **CI GitHub** (`.github/workflows/gitleaks.yml`) : elle analyse tout l'historique à chaque push sur `main` et à chaque PR.
+  - Le binaire officiel est vérifié par son empreinte SHA-256, épinglée dans le workflow.
+  - On n'utilise pas `gitleaks-action`, qui exige une licence payante pour les dépôts d'organisation.
+- `git commit --no-verify` contourne le hook local, mais pas la CI.
+
 ## Tests
 
 ```bash
