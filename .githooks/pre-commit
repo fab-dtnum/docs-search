@@ -1,0 +1,9 @@
+#!/bin/sh
+# Bloque le commit si gitleaks trouve un secret dans les changements indexés.
+# Activé par `pnpm install` (scripts/install-hooks.cjs → core.hooksPath).
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks est introuvable : commit refusé." >&2
+  echo "Installez-le : brew install gitleaks (macOS) ou https://github.com/gitleaks/gitleaks/releases" >&2
+  exit 1
+fi
+exec gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml

@@ -34,6 +34,7 @@ test('identifiant de session : alphanumérique uniquement', () => {
 test("un titre ne peut pas faire sortir un fichier de l'instantané", () => {
   assert.equal(sanitize('../../etc/passwd'), 'etc passwd');
   assert.equal(sanitize(' .bashrc. '), 'bashrc');
+  assert.equal(sanitize('✅ \u200bTâches\u200e'), '✅ Tâches');
   assert.equal(sanitize('..'), 'Sans titre');
   assert.equal(sanitize('a/b\\c:d*e?"f<g>h|i#j^k[l]m'), 'a b c d e f g h i j k l m');
   assert.equal(sanitize('x'.repeat(200)).length, 80);

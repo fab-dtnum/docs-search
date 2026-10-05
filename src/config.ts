@@ -46,11 +46,11 @@ export function requireSession(): string {
   if (!config.sessionId) {
     throw new UserError(
       'Aucune session : DOCS_SESSIONID est vide dans .env.\n' +
-        'Lancez `pnpm run login` pour vous connecter via ProConnect.',
+        'Lancez `pnpm docs:login` pour vous connecter via ProConnect.',
     );
   }
   if (!isValidSessionId(config.sessionId)) {
-    throw new UserError('DOCS_SESSIONID a un format inattendu. Relancez `pnpm run login`.');
+    throw new UserError('DOCS_SESSIONID a un format inattendu. Relancez `pnpm docs:login`.');
   }
   return config.sessionId;
 }

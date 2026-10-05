@@ -1,0 +1,21 @@
+# Configuration gitleaks : règles par défaut + secrets propres à ce projet.
+#   gitleaks git --redact          (historique)
+#   pnpm secrets:scan              (historique + fichiers non commités)
+
+[extend]
+useDefault = true
+
+# Cookie de session Docs (identifiant de session Django : 32 caractères
+# [a-z0-9]). Les règles par défaut ne le détectent pas.
+[[rules]]
+id = "docs-sessionid"
+description = "Cookie de session docs.numerique.gouv.fr (docs_sessionid)"
+regex = '''(?i)docs_sessionid\s*[=:]\s*["']?([a-z0-9]{32})\b'''
+secretGroup = 1
+keywords = ["docs_sessionid"]
+
+[allowlist]
+description = "Fichiers sans secret réel"
+paths = [
+  '''(^|/)pnpm-lock\.yaml$''',
+]

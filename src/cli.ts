@@ -5,15 +5,15 @@ import { search, type SyncMode } from './search.ts';
 import { formatDate, listSnapshots, readManifest } from './snapshots.ts';
 
 const USAGE = `Usage :
-  docs-search login                                   Connexion ProConnect, enregistre la session dans .env
-  docs-search sync <doc_id|url> [--force]             Télécharge le document et ses sous-documents (instantané daté)
-  docs-search search <doc_id|url> [--sync|--no-sync] <arguments ripgrep…>
+  pnpm docs:login                                   Connexion ProConnect, enregistre la session dans .env
+  pnpm docs:sync <doc_id|url> [--force]             Télécharge le document et ses sous-documents (instantané daté)
+  pnpm docs:search <doc_id|url> [--sync|--no-sync] <arguments ripgrep…>
                                                       Recherche ripgrep dans l'instantané du jour
-  docs-search list                                    Instantanés locaux
+  pnpm docs:list                                    Instantanés locaux
 
 Exemples :
-  pnpm run sync https://docs.numerique.gouv.fr/docs/<id>/
-  pnpm run search <id> -i "comité|copil" -C2`;
+  pnpm docs:sync https://docs.numerique.gouv.fr/docs/<id>/
+  pnpm docs:search <id> -i "comité|copil" -C2`;
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;

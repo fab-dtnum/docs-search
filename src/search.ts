@@ -42,7 +42,7 @@ async function pickSnapshot(rootId: string, mode: SyncMode): Promise<string> {
   const snap = latestSnapshot(rootId);
 
   if (!snap) {
-    if (mode === 'no') throw new UserError(`Aucun instantané pour ${rootId}. Lancez : pnpm run sync ${rootId}`);
+    if (mode === 'no') throw new UserError(`Aucun instantané pour ${rootId}. Lancez : pnpm docs:sync ${rootId}`);
     if (mode === 'ask' && !(await confirm(`Aucun instantané pour ce document. Le télécharger maintenant ? [O/n] `, true))) {
       throw new UserError('Recherche annulée.');
     }
