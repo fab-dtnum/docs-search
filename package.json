@@ -7,10 +7,10 @@
   "scripts": {
     "preinstall": "node scripts/enforce-pnpm.cjs",
     "prepare": "node scripts/install-hooks.cjs",
-    "docs:login": "node src/cli.ts login",
-    "docs:sync": "node src/cli.ts sync",
-    "docs:search": "node src/cli.ts search",
-    "docs:list": "node src/cli.ts list",
+    "docs:login": "node --use-system-ca --disable-warning=ExperimentalWarning src/cli.ts login",
+    "docs:sync": "node --use-system-ca --disable-warning=ExperimentalWarning src/cli.ts sync",
+    "docs:search": "node --use-system-ca --disable-warning=ExperimentalWarning src/cli.ts search",
+    "docs:list": "node --use-system-ca --disable-warning=ExperimentalWarning src/cli.ts list",
     "typecheck": "tsc -p .",
     "test": "node --disable-warning=ExperimentalWarning --test \"src/**/*.test.ts\"",
     "secrets:scan": "gitleaks git --redact --no-banner --config .gitleaks.toml && gitleaks git --pre-commit --redact --no-banner --config .gitleaks.toml"

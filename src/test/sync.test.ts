@@ -129,3 +129,14 @@ test('source formatted-content (production) : Markdown du serveur, liens réécr
     server.formattedContent = false;
   }
 });
+
+test("réponse de l'API sans la forme attendue : arrêt, aucun instantané écrit", async (t) => {
+  const before = readdirSync(dataDir).length;
+  server.brokenResponses = true;
+  try {
+    await assert.rejects(quiet(t, () => sync(id(1), { force: true })), /Réponse inattendue de l'API Docs/);
+  } finally {
+    server.brokenResponses = false;
+  }
+  assert.equal(readdirSync(dataDir).length, before);
+});
