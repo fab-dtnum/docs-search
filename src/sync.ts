@@ -205,6 +205,8 @@ export function safeJoin(root: string, relativePath: string): string {
 /** Nom de fichier utilisable partout (et dans les liens Obsidian). */
 export function sanitize(title: string): string {
   const s = title
+    // Caractères invisibles (espace de largeur nulle, marques de direction…) : retirés.
+    .replace(/\p{Cf}/gu, '')
     .replace(/[\x00-\x1f\x7f/\\:*?"<>|#^[\]]/g, ' ')
     .replace(/\s+/g, ' ')
     // Ni point initial (fichier caché, ignoré par rg et Obsidian) ni final.

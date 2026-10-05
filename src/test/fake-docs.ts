@@ -85,6 +85,11 @@ export interface FakeServer {
   requests: string[];
   /** Lien `next` renvoyé par la pagination (pour tester un domaine étranger). */
   nextOrigin?: string;
+  /**
+   * Comme l'instance en production : pas de champ `content`, le Markdown est
+   * produit par le serveur (`formatted-content`).
+   */
+  formattedContent?: boolean;
   close(): Promise<void>;
 }
 
@@ -112,8 +117,15 @@ export async function startFakeDocs(): Promise<FakeServer> {
         results: all.slice(page - 1, page).map(meta),
       });
     }
+    m = u.pathname.match(/^\/api\/v1.0\/documents\/([^/]+)\/formatted-content\/$/);
+    if (m && docs[m[1]] && u.searchParams.get('content_format') === 'markdown') {
+      return send(200, { id: m[1], title: docs[m[1]].title, content: `Markdown serveur de ${docs[m[1]].title}, voir [lien](${state.url}/docs/${id(5)}/)\n` });
+    }
     m = u.pathname.match(/^\/api\/v1.0\/documents\/([^/]+)\/$/);
-    if (m && docs[m[1]]) return send(200, { ...meta(m[1]), content: encode(docs[m[1]].content) });
+    if (m && docs[m[1]]) {
+      if (state.formattedContent) return send(200, meta(m[1]));
+      return send(200, { ...meta(m[1]), content: encode(docs[m[1]].content) });
+    }
     send(404, {});
   });
 

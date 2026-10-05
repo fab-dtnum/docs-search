@@ -116,3 +116,16 @@ test("pagination vers un autre domaine : refusée avant tout envoi du cookie", a
   }
   assert.equal(config.baseUrl, server.url);
 });
+
+test('source formatted-content (production) : Markdown du serveur, liens réécrits', async (t) => {
+  server.formattedContent = true;
+  try {
+    const { dir, manifest } = await quiet(t, () => sync(id(1), { force: true }));
+    assert.equal(manifest.contentSource, 'formatted-content');
+    assert.equal(manifest.documents.length, 6);
+    const budget = readFileSync(join(dir, 'Projet X/Budget.md'), 'utf8');
+    assert.match(budget, /Markdown serveur de Budget, voir \[lien\]\(<Réunions\/CR 2026 09 12 comité\.md>\)/);
+  } finally {
+    server.formattedContent = false;
+  }
+});

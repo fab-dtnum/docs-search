@@ -2,7 +2,7 @@ import { config, requireSession, UserError } from './config.ts';
 
 export class AuthError extends UserError {
   constructor() {
-    super('Session expirée ou invalide. Lancez `pnpm run login` pour vous reconnecter.');
+    super('Session expirée ou invalide. Lancez `pnpm docs:login` pour vous reconnecter.');
   }
 }
 

@@ -11,7 +11,7 @@ Prérequis : Node ≥ 22.18 (exécute le TypeScript directement, version de réf
 ```bash
 corepack enable                          # active le pnpm épinglé dans package.json
 pnpm install
-pnpm exec playwright install chromium    # navigateur pour `pnpm run login`
+pnpm exec playwright install chromium    # navigateur pour `pnpm docs:login`
 ```
 
 pnpm uniquement : npm et yarn sont refusés.
@@ -27,7 +27,7 @@ npm install -g --ignore-scripts corepack@0.36.0 && corepack enable
 Docs utilise ProConnect : pas de connexion par mot de passe depuis un script. On réutilise le cookie de session `docs_sessionid` du navigateur (valable 12 h par défaut).
 
 ```bash
-pnpm run login
+pnpm docs:login
 ```
 
 Une fenêtre Chromium s'ouvre et vous vous connectez vous-même. Le cookie est ensuite enregistré dans `.env`. Le profil de navigateur est conservé dans `.auth/`, donc les reconnexions suivantes sont souvent immédiates.
@@ -39,14 +39,14 @@ Sinon, vous pouvez recopier le cookie à la main : DevTools → Application → 
 `<doc>` est l'UUID du document ou son URL complète.
 
 ```bash
-pnpm run sync <doc>                       # nouvel instantané data/<id>-AAAA-MM-JJ-HHhMM/
-pnpm run sync <doc> --force               # sans recopier les documents inchangés
-pnpm run search <doc> -i "copil|comité" -C2
-pnpm run search <doc> --sync -w budget    # resynchronise avant de chercher
-pnpm run list                             # instantanés locaux
+pnpm docs:sync <doc>                       # nouvel instantané data/<id>-AAAA-MM-JJ-HHhMM/
+pnpm docs:sync <doc> --force               # sans recopier les documents inchangés
+pnpm docs:search <doc> -i "copil|comité" -C2
+pnpm docs:search <doc> --sync -w budget    # resynchronise avant de chercher
+pnpm docs:list                             # instantanés locaux
 ```
 
-⚠️ Toujours `pnpm run …` : `pnpm login`, `pnpm list` et `pnpm search` sont des commandes de pnpm lui-même (registre npm), pas celles de ce projet.
+Les scripts sont préfixés par `docs:` : `pnpm login`, `pnpm list` et `pnpm search` sont des commandes de pnpm lui-même (registre npm), et aucune commande de pnpm ne contient `:`.
 
 - **sync** affiche le nombre de documents récupérés (1 document + N sous-documents) et la date de la dernière modification d'un sous-document. Les documents dont `updated_at` n'a pas changé sont recopiés depuis l'instantané précédent au lieu d'être retéléchargés.
 - **search** transmet tous les arguments qui suivent `<doc>` à `rg` (syntaxe ripgrep), puis affiche les liens vers Docs des documents trouvés.
@@ -73,7 +73,7 @@ Les liens entre documents Docs sont réécrits en liens relatifs, ce qui permet 
 
 | Variable | Défaut |
 | --- | --- |
-| `DOCS_SESSIONID` | — (rempli par `pnpm run login`) |
+| `DOCS_SESSIONID` | — (rempli par `pnpm docs:login`) |
 | `DOCS_BASE_URL` | `https://docs.numerique.gouv.fr` |
 | `DOCS_DATA_DIR` | `./data` |
 | `DOCS_CONCURRENCY` | `4` |

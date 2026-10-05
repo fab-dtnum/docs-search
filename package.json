@@ -6,10 +6,10 @@
   "description": "Recherche plein texte dans une arborescence docs.numerique.gouv.fr (instantanés Markdown + ripgrep)",
   "scripts": {
     "preinstall": "node scripts/enforce-pnpm.cjs",
-    "login": "node src/cli.ts login",
-    "sync": "node src/cli.ts sync",
-    "search": "node src/cli.ts search",
-    "list": "node src/cli.ts list",
+    "docs:login": "node src/cli.ts login",
+    "docs:sync": "node src/cli.ts sync",
+    "docs:search": "node src/cli.ts search",
+    "docs:list": "node src/cli.ts list",
     "typecheck": "tsc -p .",
     "test": "node --disable-warning=ExperimentalWarning --test \"src/**/*.test.ts\""
   },
