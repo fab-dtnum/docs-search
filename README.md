@@ -40,7 +40,7 @@ Sinon, vous pouvez recopier le cookie à la main : DevTools → Application → 
 
 ```bash
 pnpm docs:sync <doc>                       # nouvel instantané data/<id>-AAAA-MM-JJ-HHhMM/
-pnpm docs:sync <doc> --force               # sans recopier les documents inchangés
+pnpm docs:sync <doc> --force               # tout retélécharger (ni recopie, ni reprise)
 pnpm docs:search <doc> -i "copil|comité" -C2
 pnpm docs:search <doc> --sync -w budget    # resynchronise avant de chercher
 pnpm docs:list                             # instantanés locaux
@@ -49,6 +49,7 @@ pnpm docs:list                             # instantanés locaux
 Les scripts sont préfixés par `docs:` : `pnpm login`, `pnpm list` et `pnpm search` sont des commandes de pnpm lui-même (registre npm), et aucune commande de pnpm ne contient `:`.
 
 - **sync** affiche le nombre de documents récupérés (1 document + N sous-documents) et la date de la dernière modification d'un sous-document. Les documents dont `updated_at` n'a pas changé sont recopiés depuis l'instantané précédent au lieu d'être retéléchargés.
+- **Reprise après interruption** (limite de débit, coupure réseau, Ctrl-C, plantage) : chaque document téléchargé est enregistré aussitôt dans `data/.<id>.partial/`. Relancer `pnpm docs:sync <doc>` reprend là où la synchronisation s'est arrêtée : la liste des enfants est relue, et un document déjà téléchargé n'est réutilisé que s'il figure au journal de la reprise et que son `updated_at` n'a pas changé. Seuls les documents manquants ou modifiés sont retéléchargés. Le journal est écrit après chaque fichier : un fichier interrompu en cours d'écriture n'y figure pas et sera retéléchargé. `pnpm docs:list` signale les synchronisations interrompues.
 - **search** transmet tous les arguments qui suivent `<doc>` à `rg` (syntaxe ripgrep), puis affiche les liens vers Docs des documents trouvés.
   - Si l'instantané le plus récent ne date pas d'aujourd'hui, le script donne sa date et propose de retélécharger.
   - `--sync` retélécharge sans poser la question, `--no-sync` cherche directement dans l'instantané existant.
@@ -77,6 +78,9 @@ Les liens entre documents Docs sont réécrits en liens relatifs, ce qui permet 
 | `DOCS_BASE_URL` | `https://docs.numerique.gouv.fr` |
 | `DOCS_DATA_DIR` | `./data` |
 | `DOCS_CONCURRENCY` | `4` |
+| `DOCS_RATE_PER_MINUTE` | `60` |
+
+Docs limite l'API des documents à 80 requêtes par minute et par utilisateur, interface web comprise. Au-delà, il répond `429` pendant environ une minute. `sync` espace donc ses requêtes (`DOCS_RATE_PER_MINUTE`, une requête par document plus une par document qui a des enfants). Un éventuel `429` déclenche une seule pause de la durée demandée (`Retry-After`). S'il se reproduit, la synchronisation s'arrête sans insister.
 
 ## Sécurité
 

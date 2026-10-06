@@ -36,6 +36,9 @@ export const config = {
   sessionId: process.env.DOCS_SESSIONID ?? '',
   dataDir: resolve(process.env.DOCS_DATA_DIR ?? 'data'),
   concurrency: Math.max(1, Number(process.env.DOCS_CONCURRENCY ?? 4) || 4),
+  // Docs limite l'API documents à 80 requêtes/minute par utilisateur (API_DOCUMENT_THROTTLE_RATE),
+  // budget partagé avec l'interface web ouverte en parallèle : on reste en dessous.
+  ratePerMinute: Math.max(1, Number(process.env.DOCS_RATE_PER_MINUTE ?? 60) || 60),
 };
 
 /** Format d'un identifiant de session Django : empêche toute injection d'en-tête ou de ligne dans .env. */

@@ -54,6 +54,52 @@ export function listSnapshots(rootId?: string): (Snapshot & { rootId: string })[
 
 export const latestSnapshot = (rootId: string) => listSnapshots(rootId).at(-1);
 
+/**
+ * Synchronisation interrompue : `data/.<id>.partial/`, un seul par document racine.
+ * Chaque document téléchargé y est écrit aussitôt (`raw/<id>.md`), puis noté dans
+ * `journal.jsonl` avec son `updated_at`. Le journal est écrit après le fichier :
+ * un fichier sans ligne (arrêt pendant l'écriture) est ignoré et retéléchargé.
+ */
+export interface PartialSync {
+  dir: string;
+  rootId: string;
+  rootTitle: string;
+  startedAt: Date;
+  /** id → updated_at des documents déjà téléchargés. */
+  done: Map<string, string>;
+}
+
+const PARTIAL_RE = /^\.(.+)\.partial$/;
+export const partialDir = (rootId: string) => join(config.dataDir, `.${rootId}.partial`);
+
+export function readPartial(rootId: string): PartialSync | undefined {
+  const dir = partialDir(rootId);
+  const info = join(dir, 'partial.json');
+  if (!existsSync(info)) return undefined;
+  const { rootTitle, startedAt } = JSON.parse(readFileSync(info, 'utf8'));
+  const done = new Map<string, string>();
+  const journal = join(dir, 'journal.jsonl');
+  if (existsSync(journal)) {
+    for (const line of readFileSync(journal, 'utf8').split('\n')) {
+      // Dernière ligne tronquée par un arrêt brutal : ignorée, le document sera retéléchargé.
+      try {
+        const e = JSON.parse(line);
+        done.set(e.id, e.updated_at);
+      } catch {}
+    }
+  }
+  return { dir, rootId, rootTitle, startedAt: new Date(startedAt), done };
+}
+
+export function listPartials(): PartialSync[] {
+  if (!existsSync(config.dataDir)) return [];
+  return readdirSync(config.dataDir).flatMap((name) => {
+    const m = name.match(PARTIAL_RE);
+    const p = m && readPartial(m[1]);
+    return p ? [p] : [];
+  });
+}
+
 export function readManifest(dir: string): Manifest {
   return JSON.parse(readFileSync(join(dir, META_DIR, 'manifest.json'), 'utf8'));
 }

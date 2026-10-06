@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { after, before, test } from 'node:test';
-import { id, SESSION, startFakeDocs, type FakeServer } from './fake-docs.ts';
+import { docs, id, SESSION, startFakeDocs, type FakeServer } from './fake-docs.ts';
 
 let server: FakeServer;
 let dataDir: string;
@@ -15,7 +15,7 @@ let config: typeof import('../config.ts').config;
 before(async () => {
   server = await startFakeDocs();
   dataDir = mkdtempSync(join(tmpdir(), 'docs-search-'));
-  Object.assign(process.env, { DOCS_BASE_URL: server.url, DOCS_SESSIONID: SESSION, DOCS_DATA_DIR: dataDir });
+  Object.assign(process.env, { DOCS_BASE_URL: server.url, DOCS_SESSIONID: SESSION, DOCS_DATA_DIR: dataDir, DOCS_RATE_PER_MINUTE: '100000' });
   ({ sync } = await import('../sync.ts'));
   ({ config } = await import('../config.ts'));
 });
@@ -119,13 +119,66 @@ test("pagination vers un autre domaine : refusée avant tout envoi du cookie", a
 
 test('source formatted-content (production) : Markdown du serveur, liens réécrits', async (t) => {
   server.formattedContent = true;
+  server.requests.length = 0;
   try {
     const { dir, manifest } = await quiet(t, () => sync(id(1), { force: true }));
     assert.equal(manifest.contentSource, 'formatted-content');
+    // Seule la racine est lue en entier : le Markdown n'a besoin que de l'id.
+    assert.equal(server.requests.filter((r) => /^\/api\/v1\.0\/documents\/[^/]+\/$/.test(r)).length, 1);
     assert.equal(manifest.documents.length, 6);
     const budget = readFileSync(join(dir, 'Projet X/Budget.md'), 'utf8');
     assert.match(budget, /Markdown serveur de Budget, voir \[lien\]\(<Réunions\/CR 2026 09 12 comité\.md>\)/);
   } finally {
     server.formattedContent = false;
+  }
+});
+
+test('429 isolé : une pause de la durée Retry-After, puis la synchronisation reprend', async (t) => {
+  server.throttle = 1;
+  const start = Date.now();
+  const { manifest } = await quiet(t, () => sync(id(1), { force: true }));
+  assert.ok(Date.now() - start >= 6000); // Retry-After (1 s) + marge (5 s)
+  assert.equal(manifest.documents.filter((d) => d.error).length, 0);
+});
+
+test('reprise après interruption : seuls les documents absents du journal sont retéléchargés', async (t) => {
+  const contentRequests = () => server.requests.filter((r) => /^\/api\/v1\.0\/documents\/[^/]+\/$/.test(r));
+  server.throttleAfter = 6;
+  await assert.rejects(quiet(t, () => sync(id(1), { force: true })), /HTTP 429[^]*conservés[^]*pnpm docs:sync/);
+  server.throttleAfter = undefined;
+  server.throttle = 0;
+
+  const partial = join(dataDir, `.${id(1)}.partial`);
+  const journal = readFileSync(join(partial, 'journal.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l).id);
+  assert.ok(journal.length >= 1 && journal.length < 6, `journal : ${journal.length}`);
+  // Fichier écrit mais absent du journal (arrêt pendant l'écriture) : retéléchargé.
+  const missing = Object.keys(docs).filter((d) => !journal.includes(d));
+  writeFileSync(join(partial, 'raw', `${missing[0]}.md`), 'tronqu');
+
+  // Instantanés complets mis de côté : rien ne peut en être recopié, seule la reprise joue.
+  const aside = mkdtempSync(join(tmpdir(), 'docs-search-aside-'));
+  const snapshots = readdirSync(dataDir).filter((n) => !n.startsWith('.'));
+  for (const n of snapshots) renameSync(join(dataDir, n), join(aside, n));
+
+  await new Promise((r) => setTimeout(r, 6100)); // fin du blocage : Retry-After + marge
+  server.requests.length = 0;
+  const { manifest } = await quiet(t, () => sync(id(1)));
+  assert.equal(manifest.documents.length, 6);
+  assert.equal(manifest.documents.filter((d) => d.error).length, 0);
+  const expected = new Set([id(1), ...missing]);
+  assert.deepEqual(new Set(contentRequests()), new Set([...expected].map((d) => `/api/v1.0/documents/${d}/`)));
+  assert.ok(!existsSync(partial)); // instantané complet : dossier de reprise supprimé
+});
+
+test("429 persistant : arrêt de la synchronisation, sans insister", async (t) => {
+  server.throttle = Infinity;
+  server.requests.length = 0;
+  try {
+    await assert.rejects(quiet(t, () => sync(id(1), { force: true })), /HTTP 429.*interrompue/s);
+    await new Promise((r) => setTimeout(r, 1500));
+    // users/me puis sa seule nouvelle tentative : rien d'autre n'est envoyé.
+    assert.equal(server.requests.length, 2);
+  } finally {
+    server.throttle = 0;
   }
 });
