@@ -1,6 +1,17 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  appendFileSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, posix, resolve, sep } from 'node:path';
-import { AuthError, type DocMeta, RateLimitError, getDoc, getFormattedMarkdown, getMe, listChildren } from './api.ts';
+import { AuthError, type DocMeta, RateLimitError, getDoc, getFormattedMarkdown, getMe, getMedia, listChildren } from './api.ts';
 import { config, docUrl, UserError } from './config.ts';
 import {
   formatDate,
@@ -24,6 +35,8 @@ interface Node {
   body: string;
   /** Téléchargé, recopié de l'instantané précédent, ou repris d'une synchronisation interrompue. */
   origin: 'fetched' | 'copied' | 'resumed';
+  /** Chemin `/media/…` → fichier local à recopier dans l'instantané. */
+  sources: Map<string, string>;
 }
 
 export interface SyncResult {
@@ -32,6 +45,7 @@ export interface SyncResult {
 }
 
 export async function sync(rootId: string, { force = false } = {}): Promise<SyncResult> {
+  const startedAt = Date.now();
   const me = await getMe();
   console.log(`Connecté en tant que ${me.email}`);
 
@@ -62,6 +76,11 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
     const f = previous && join(previous.dir, META_DIR, 'raw', `${id}.md`);
     return f && existsSync(f) ? readFileSync(f, 'utf8') : undefined;
   };
+  // Recopiée de l'instantané précédent ou du dossier de reprise si son chemin est immuable (voir isImmutableMedia).
+  const prevMedia = new Map<string, string>();
+  for (const e of prevById.values()) {
+    for (const a of e.attachments ?? []) if (a.file) prevMedia.set(a.media, safeJoin(previous!.dir, a.file));
+  }
 
   const now = new Date();
   let name = snapshotName(rootId, now);
@@ -88,6 +107,47 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
     posix.join(dir, `${uniqueName(usedNames, dir, sanitize(meta.title?.trim() || 'Sans titre'))}.md`);
   const usedNames = new Map<string, Set<string>>();
 
+  // Une pièce jointe liée depuis plusieurs documents n'est téléchargée qu'une fois.
+  const mediaDownloads = new Map<string, Promise<string>>();
+  const downloadMedia = (media: string) => {
+    let p = mediaDownloads.get(media);
+    if (!p) {
+      p = (async () => {
+        const cached = join(partial.dir, 'attachments', mediaKey(media));
+        if (isImmutableMedia(media)) {
+          if (existsSync(cached)) return cached;
+          const previousCopy = prevMedia.get(media);
+          if (previousCopy && existsSync(previousCopy)) return previousCopy;
+        }
+        const data = await limit(() => getMedia(media));
+        mkdirSync(dirname(cached), { recursive: true, mode: DIR_MODE });
+        writeFileSync(`${cached}.tmp`, data, { mode: FILE_MODE });
+        renameSync(`${cached}.tmp`, cached);
+        return cached;
+      })();
+      mediaDownloads.set(media, p);
+    }
+    return p;
+  };
+
+  async function fetchAttachments(node: Node) {
+    const medias = [...new Set(findAttachments(node.body).map((a) => a.media))];
+    if (!medias.length) return;
+    node.entry.attachments = medias.map((media) => ({ media }));
+    const results = await Promise.allSettled(
+      node.entry.attachments.map(async (a) => {
+        try {
+          node.sources.set(a.media, await downloadMedia(a.media));
+        } catch (e) {
+          if (e instanceof AuthError || e instanceof RateLimitError) throw (aborted ??= { error: e }).error;
+          a.error = (e as Error).message;
+        }
+      }),
+    );
+    const failed = results.find((r) => r.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
+
   // Le limiteur n'encadre que les requêtes, jamais la récursion (sinon blocage).
   async function visit(meta: DocMeta, parentId: string | null, file: string, full?: DocMeta) {
     const entry: ManifestEntry = {
@@ -99,7 +159,7 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
       file,
       url: docUrl(meta.id),
     };
-    const node: Node = { entry, body: '', origin: 'fetched' };
+    const node: Node = { entry, body: '', origin: 'fetched', sources: new Map() };
     nodes.push(node);
 
     const resumed = resumedRaw(meta);
@@ -122,6 +182,7 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
         entry.error = (e as Error).message;
       }
     }
+    await fetchAttachments(node);
     progress();
 
     if (meta.numchild > 0) {
@@ -163,6 +224,7 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
   rmSync(partial.dir, { recursive: true, force: true });
 
   printSummary(nodes, finalDir, previous?.name);
+  console.log(`Durée : ${formatDuration(Date.now() - startedAt)}`);
   return { dir: finalDir, manifest };
 }
 
@@ -216,8 +278,10 @@ function writeSnapshot(dir: string, nodes: Node[]): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, META_DIR, 'raw'), { recursive: true, mode: DIR_MODE });
   const fileById = new Map(nodes.map((n) => [n.entry.id, n.entry.file]));
+  // Les pièces jointes partagent le dossier des sous-documents : aucun nom ne doit en écraser un autre.
+  const usedFiles = new Set(nodes.map((n) => n.entry.file.toLowerCase()));
 
-  for (const { entry, body } of nodes) {
+  for (const { entry, body, sources } of nodes) {
     writeFileSync(join(dir, META_DIR, 'raw', `${entry.id}.md`), body, { mode: FILE_MODE });
     const frontMatter = [
       '---',
@@ -229,11 +293,87 @@ function writeSnapshot(dir: string, nodes: Node[]): void {
       '---',
       '',
     ].join('\n');
-    const content = rewriteDocLinks(body, entry.file, fileById);
+    const fileByMedia = writeAttachments(dir, entry, body, sources, usedFiles);
+    const content = rewriteAttachmentLinks(rewriteDocLinks(body, entry.file, fileById), entry.file, fileByMedia);
     const path = safeJoin(dir, entry.file);
     mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE });
     writeFileSync(path, frontMatter + content, { mode: FILE_MODE });
   }
+}
+
+/**
+ * Copie les pièces jointes d'un document dans le dossier du même nom que son .md
+ * (`Projet X.md` → `Projet X/`), nommées d'après le texte du lien (`image.png`, `rapport.pdf`).
+ */
+function writeAttachments(
+  dir: string,
+  entry: ManifestEntry,
+  body: string,
+  sources: Map<string, string>,
+  usedFiles: Set<string>,
+): Map<string, string> {
+  const fileByMedia = new Map<string, string>();
+  const textByMedia = new Map<string, string>();
+  for (const a of findAttachments(body)) if (!textByMedia.get(a.media)) textByMedia.set(a.media, a.text);
+  const attachmentDir = entry.file.slice(0, -'.md'.length);
+
+  for (const a of entry.attachments ?? []) {
+    const source = sources.get(a.media);
+    if (!source) continue;
+    const ext = posix.extname(new URL(a.media, 'http://x').pathname).toLowerCase();
+    const safeExt = /^\.[a-z0-9]{1,10}$/.test(ext) ? ext : '';
+    const text = textByMedia.get(a.media)?.trim() ?? '';
+    const stem = text.toLowerCase().endsWith(safeExt) ? text.slice(0, text.length - safeExt.length) : text;
+    const base = sanitize(stem || posix.basename(a.media, ext));
+    let file = posix.join(attachmentDir, `${base}${safeExt}`);
+    for (let i = 2; usedFiles.has(file.toLowerCase()); i++) file = posix.join(attachmentDir, `${base} (${i})${safeExt}`);
+    usedFiles.add(file.toLowerCase());
+
+    const path = safeJoin(dir, file);
+    mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE });
+    // Clone APFS/Btrfs quand c'est possible : pas d'espace disque en plus d'un instantané à l'autre.
+    copyFileSync(source, path, constants.COPYFILE_FICLONE);
+    a.file = file;
+    fileByMedia.set(a.media, file);
+  }
+  return fileByMedia;
+}
+
+/**
+ * Docs ne réécrit jamais une pièce jointe : chaque envoi crée `/media/<doc>/attachments/<uuid4>.<ext>`
+ * (UUID tiré au hasard, remplacer une image en crée une nouvelle). Même chemin, même contenu :
+ * une copie locale suffit. Tout autre chemin est retéléchargé à chaque synchronisation.
+ */
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const IMMUTABLE_MEDIA_RE = new RegExp(`^/media/${UUID}/attachments/${UUID}\\.[A-Za-z0-9]{1,10}$`);
+export const isImmutableMedia = (media: string) => IMMUTABLE_MEDIA_RE.test(media);
+
+/** « 42 s », « 3 min 05 s ». */
+export function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`;
+}
+
+/** Nom de la copie d'une pièce jointe dans le dossier de reprise : fixe, et sans rien de venu du serveur. */
+const mediaKey = (media: string) => createHash('sha256').update(media).digest('hex').slice(0, 32);
+
+/** `![texte](https://docs…/media/…)` ou `[texte](/media/…)` : pièces jointes hébergées par Docs. */
+function attachmentRe(): RegExp {
+  const base = config.baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\[([^\\]]*)\\]\\((?:${base})?(/media/[^)\\s]+)\\)`, 'g');
+}
+
+export function findAttachments(body: string): { text: string; media: string }[] {
+  return [...body.matchAll(attachmentRe())].map((m) => ({ text: m[1], media: m[2] }));
+}
+
+/** Liens vers les pièces jointes téléchargées → liens relatifs ; les autres gardent l'URL de Docs. */
+function rewriteAttachmentLinks(body: string, from: string, fileByMedia: Map<string, string>): string {
+  return body.replace(attachmentRe(), (match, text: string, media: string) => {
+    const target = fileByMedia.get(media);
+    if (!target) return match;
+    return `[${text}](<${posix.relative(posix.dirname(from), target)}>)`;
+  });
 }
 
 /** Liens vers des documents Docs de l'instantané → liens relatifs (navigables dans Obsidian). */
@@ -259,6 +399,12 @@ function printSummary(nodes: Node[], dir: string, previousName?: string): void {
   if (errors.length) {
     console.log(`  dont ${errors.length} en erreur :`);
     for (const n of errors) console.log(`    - ${n.entry.file} : ${n.entry.error}`);
+  }
+  const attachments = nodes.flatMap((n) => (n.entry.attachments ?? []).map((a) => ({ ...a, doc: n.entry.file })));
+  if (attachments.length) {
+    const failed = attachments.filter((a) => a.error);
+    console.log(`${attachments.length} pièce(s) jointe(s) (images, fichiers)${failed.length ? `, dont ${failed.length} en erreur :` : '.'}`);
+    for (const a of failed) console.log(`    - ${a.doc} : ${a.media} — ${a.error}`);
   }
 
   const latest = nodes

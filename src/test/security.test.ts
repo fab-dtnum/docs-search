@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { apiUrl } from '../api.ts';
+import { apiUrl, mediaUrl } from '../api.ts';
 import { isValidSessionId, parseBaseUrl, setEnvVar } from '../config.ts';
-import { safeJoin, sanitize } from '../sync.ts';
+import { formatDuration, isImmutableMedia, safeJoin, sanitize } from '../sync.ts';
 
 const BASE = 'https://docs.numerique.gouv.fr';
 
@@ -21,6 +21,10 @@ test("le cookie n'est jamais envoyé hors de l'API Docs", () => {
   assert.throws(() => apiUrl('//evil.example/api/v1.0/', BASE), /refusée/);
   assert.throws(() => apiUrl('../../admin/', BASE), /refusée/);
   assert.throws(() => apiUrl('http://docs.numerique.gouv.fr/api/v1.0/x/', BASE), /refusée/);
+  assert.equal(mediaUrl('/media/d/attachments/a.png', BASE), `${BASE}/media/d/attachments/a.png`);
+  assert.throws(() => mediaUrl('https://evil.example/media/a.png', BASE), /refusée/);
+  assert.throws(() => mediaUrl('//evil.example/media/a.png', BASE), /refusée/);
+  assert.throws(() => mediaUrl('/media/../api/v1.0/users/me/', BASE), /refusée/);
 });
 
 test('identifiant de session : alphanumérique uniquement', () => {
@@ -41,4 +45,17 @@ test("un titre ne peut pas faire sortir un fichier de l'instantané", () => {
   assert.throws(() => safeJoin('/tmp/snap', '../dehors.md'), /refusé/);
   assert.throws(() => safeJoin('/tmp/snap', '/etc/passwd'), /refusé/);
   assert.equal(safeJoin('/tmp/snap', 'a/b.md'), '/tmp/snap/a/b.md');
+});
+
+test('pièces jointes recopiées seulement sous un chemin immuable de Docs', () => {
+  const doc = 'e9ebe2ad-e54b-498f-971a-05845f1a662c';
+  assert.ok(isImmutableMedia(`/media/${doc}/attachments/7544ee92-b4e0-400b-9716-393e61a2d409.png`));
+  assert.ok(!isImmutableMedia(`/media/${doc}/attachments/image.png`));
+  assert.ok(!isImmutableMedia(`/media/${doc}/attachments/7544ee92-b4e0-400b-9716-393e61a2d409.png?v=2`));
+  assert.ok(!isImmutableMedia('/media/avatar.png'));
+});
+
+test('durée de synchronisation lisible', () => {
+  assert.equal(formatDuration(42_400), '42 s');
+  assert.equal(formatDuration(185_000), '3 min 05 s');
 });

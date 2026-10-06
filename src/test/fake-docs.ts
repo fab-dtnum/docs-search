@@ -34,6 +34,14 @@ export function encode(blocks: () => Y.XmlElement[]): string {
   return Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64');
 }
 
+/** Pièces jointes servies sous `/media/<doc>/attachments/` (`missing` répond 404). */
+export const MEDIA = {
+  png: 'a0000000-0000-4000-8000-000000000001.png',
+  pdf: 'a0000000-0000-4000-8000-000000000002.pdf',
+  missing: 'a0000000-0000-4000-8000-000000000003.png',
+};
+export const mediaBytes = (name: string) => Buffer.from(`contenu de ${name}`);
+
 interface FakeDoc {
   title: string;
   updated_at: string;
@@ -73,7 +81,12 @@ export const docs: Record<string, FakeDoc> = {
     title: 'Budget',
     updated_at: '2026-09-02T10:00:00Z',
     children: [],
-    content: () => [block(el('paragraph', {}, [txt(['Montant total 42 k€, voir ']), el('interlinkingLinkInline', { docId: id(5), title: 'CR' })]))],
+    content: () => [
+      block(el('paragraph', {}, [txt(['Montant total 42 k€, voir ']), el('interlinkingLinkInline', { docId: id(5), title: 'CR' })])),
+      block(el('image', { url: `/media/${id(3)}/attachments/${MEDIA.png}`, name: 'schéma.png' })),
+      block(el('file', { url: `/media/${id(3)}/attachments/${MEDIA.pdf}`, name: 'Rapport final.pdf' })),
+      block(el('image', { url: `/media/${id(3)}/attachments/${MEDIA.missing}`, name: 'manquante.png' })),
+    ],
   },
   [id(4)]: { title: '../budget', updated_at: '2026-09-03T10:00:00Z', children: [], content: () => [para(['doublon de titre'])] },
   [id(5)]: { title: 'CR 2026/09/12 : comité', updated_at: '2026-10-04T16:45:00Z', children: [], content: () => [para(['Décision du COPIL : valider le mot-secret-xyz'])] },
@@ -119,6 +132,12 @@ export async function startFakeDocs(): Promise<FakeServer> {
     const u = new URL(req.url ?? '/', state.url);
     if (u.pathname === '/api/v1.0/users/me/') return send(200, { email: 'test@example.org' });
 
+    const media = u.pathname.match(/^\/media\/[^/]+\/attachments\/([^/]+)$/);
+    if (media && media[1] !== MEDIA.missing) {
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      return res.end(mediaBytes(media[1]));
+    }
+
     let m = u.pathname.match(/^\/api\/v1.0\/documents\/([^/]+)\/children\/$/);
     if (m) {
       const page = Number(u.searchParams.get('page') ?? 1);
@@ -131,7 +150,8 @@ export async function startFakeDocs(): Promise<FakeServer> {
     }
     m = u.pathname.match(/^\/api\/v1.0\/documents\/([^/]+)\/formatted-content\/$/);
     if (m && docs[m[1]] && u.searchParams.get('content_format') === 'markdown') {
-      return send(200, { id: m[1], title: docs[m[1]].title, content: `Markdown serveur de ${docs[m[1]].title}, voir [lien](${state.url}/docs/${id(5)}/)\n` });
+      const image = m[1] === id(3) ? `\n![schéma.png](${state.url}/media/${id(3)}/attachments/${MEDIA.png})\n` : '';
+      return send(200, { id: m[1], title: docs[m[1]].title, content: `Markdown serveur de ${docs[m[1]].title}, voir [lien](${state.url}/docs/${id(5)}/)\n${image}` });
     }
     m = u.pathname.match(/^\/api\/v1.0\/documents\/([^/]+)\/$/);
     if (m && state.brokenResponses) return send(200, {});

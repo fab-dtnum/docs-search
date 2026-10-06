@@ -42,6 +42,8 @@ interface Page<T> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TIMEOUT_MS = 30_000;
+/** Pièces jointes : un PDF volumineux peut être long à télécharger. */
+const MEDIA_TIMEOUT_MS = 300_000;
 const MAX_RETRY_AFTER_S = 120;
 /** Marge ajoutée au `Retry-After` du serveur, pour ne pas revenir pile à la limite. */
 const RETRY_MARGIN_S = 5;
@@ -105,18 +107,30 @@ function networkErrorMessage(code: string): string {
   return lines.join('\n');
 }
 
-async function request<T>(path: string, sessionId = requireSession()): Promise<T> {
-  const url = apiUrl(path);
+/**
+ * URL absolue d'une pièce jointe (image, PDF…) : uniquement sous `/media/` sur le domaine
+ * de Docs, pour ne jamais envoyer le cookie de session ailleurs.
+ */
+export function mediaUrl(path: string, baseUrl = config.baseUrl): string {
+  const url = new URL(path, baseUrl);
+  if (url.origin !== baseUrl || !url.pathname.startsWith('/media/')) {
+    throw new UserError(`URL hors des pièces jointes Docs refusée : ${url.origin}${url.pathname}`);
+  }
+  return url.href;
+}
+
+/** Requête authentifiée, avec espacement, nouvelles tentatives et gestion du 429. */
+async function send(url: string, path: string, accept: string, timeoutMs: number, sessionId = requireSession()) {
   for (let attempt = 0; ; attempt++) {
     await waitForSlot();
     if (Date.now() < blockedUntil) throw new RateLimitError(Math.ceil((blockedUntil - Date.now()) / 1000));
     let res: Response;
     try {
       res = await fetch(url, {
-        headers: { Cookie: `docs_sessionid=${sessionId}`, Accept: 'application/json' },
+        headers: { Cookie: `docs_sessionid=${sessionId}`, Accept: accept },
         // Pas de redirection suivie : le cookie ne doit pas partir ailleurs.
         redirect: 'manual',
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
       const code = networkErrorCode(e);
@@ -145,8 +159,13 @@ async function request<T>(path: string, sessionId = requireSession()): Promise<T
       continue;
     }
     if (!res.ok) throw new HttpError(res.status, path);
-    return (await res.json()) as T;
+    return res;
   }
+}
+
+async function request<T>(path: string, sessionId?: string): Promise<T> {
+  const res = await send(apiUrl(path), path, 'application/json', TIMEOUT_MS, sessionId);
+  return (await res.json()) as T;
 }
 
 /** Réponse qui n'a pas la forme attendue : on s'arrête plutôt que d'écrire un instantané faux. */
@@ -186,4 +205,10 @@ export async function getFormattedMarkdown(id: string): Promise<string> {
     `documents/${id}/formatted-content/?content_format=markdown`,
   );
   return r.content ?? '';
+}
+
+/** Contenu d'une pièce jointe (`/media/…`). */
+export async function getMedia(path: string): Promise<Buffer> {
+  const res = await send(mediaUrl(path), path, '*/*', MEDIA_TIMEOUT_MS);
+  return Buffer.from(await res.arrayBuffer());
 }

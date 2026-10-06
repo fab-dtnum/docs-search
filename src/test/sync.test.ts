@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, statSyn
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { after, before, test } from 'node:test';
-import { docs, id, SESSION, startFakeDocs, type FakeServer } from './fake-docs.ts';
+import { docs, id, MEDIA, mediaBytes, SESSION, startFakeDocs, type FakeServer } from './fake-docs.ts';
 
 let server: FakeServer;
 let dataDir: string;
@@ -51,6 +51,8 @@ test('sync : arborescence Obsidian, Markdown, liens internes, droits', async (t)
   assert.deepEqual(filesOf(dir), [
     'Projet X.md',
     'Projet X/Budget.md',
+    'Projet X/Budget/Rapport final.pdf', // pièces jointes : dossier du même nom que le .md
+    'Projet X/Budget/schéma.png',
     'Projet X/Réunions.md',
     'Projet X/Réunions/CR 2026 09 12 comité.md',
     'Projet X/Réunions/Sans titre.md',
@@ -68,16 +70,34 @@ test('sync : arborescence Obsidian, Markdown, liens internes, droits', async (t)
 
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   assert.equal(statSync(join(dir, 'Projet X.md')).mode & 0o777, 0o600);
+  assert.equal(statSync(join(dir, 'Projet X/Budget/schéma.png')).mode & 0o777, 0o600);
+});
+
+test('sync : images et fichiers téléchargés, liens relatifs pour Obsidian', async (t) => {
+  const { dir, manifest } = await quiet(t, () => sync(id(1), { force: true }));
+  const budget = readFileSync(join(dir, 'Projet X/Budget.md'), 'utf8');
+  assert.match(budget, /^!\[schéma\.png\]\(<Budget\/schéma\.png>\)$/m);
+  assert.match(budget, /^\[Rapport final\.pdf\]\(<Budget\/Rapport final\.pdf>\)$/m);
+  // Pièce jointe introuvable : le lien vers Docs est conservé, l'erreur notée au manifest.
+  assert.match(budget, new RegExp(`!\\[manquante\\.png\\]\\(/media/${id(3)}/attachments/${MEDIA.missing}\\)`));
+  assert.deepEqual(readFileSync(join(dir, 'Projet X/Budget/schéma.png')), mediaBytes(MEDIA.png));
+  assert.deepEqual(readFileSync(join(dir, 'Projet X/Budget/Rapport final.pdf')), mediaBytes(MEDIA.pdf));
+  const entry = manifest.documents.find((d) => d.id === id(3))!;
+  assert.equal(entry.attachments?.length, 3);
+  assert.match(entry.attachments?.find((a) => a.media.endsWith(MEDIA.missing))?.error ?? '', /HTTP 404/);
 });
 
 test("sync suivant : nouvel instantané, documents inchangés recopiés sans requête", async (t) => {
   server.requests.length = 0;
   const { dir } = await quiet(t, () => sync(id(1)));
-  assert.equal(readdirSync(dataDir).length, 2);
-  assert.ok(dir.endsWith(readdirSync(dataDir).sort()[1]));
+  assert.equal(readdirSync(dataDir).length, 3);
+  assert.ok(dir.endsWith(readdirSync(dataDir).sort()[2]));
   // Seuls la racine (toujours lue) et les listes d'enfants sont demandées.
   const contentRequests = server.requests.filter((r) => /^\/api\/v1\.0\/documents\/[^/]+\/$/.test(r));
   assert.deepEqual(contentRequests, [`/api/v1.0/documents/${id(1)}/`]);
+  // Pièces jointes recopiées de l'instantané précédent ; seule celle en erreur est redemandée.
+  assert.deepEqual(server.requests.filter((r) => r.startsWith('/media/')), [`/media/${id(3)}/attachments/${MEDIA.missing}`]);
+  assert.ok(existsSync(join(dir, 'Projet X/Budget/schéma.png')));
 });
 
 test('search : syntaxe ripgrep et liens vers Docs', async () => {
@@ -128,6 +148,8 @@ test('source formatted-content (production) : Markdown du serveur, liens réécr
     assert.equal(manifest.documents.length, 6);
     const budget = readFileSync(join(dir, 'Projet X/Budget.md'), 'utf8');
     assert.match(budget, /Markdown serveur de Budget, voir \[lien\]\(<Réunions\/CR 2026 09 12 comité\.md>\)/);
+    assert.match(budget, /!\[schéma\.png\]\(<Budget\/schéma\.png>\)/);
+    assert.ok(existsSync(join(dir, 'Projet X/Budget/schéma.png')));
   } finally {
     server.formattedContent = false;
   }
