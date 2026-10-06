@@ -133,6 +133,17 @@ test('source formatted-content (production) : Markdown du serveur, liens réécr
   }
 });
 
+test("réponse de l'API sans la forme attendue : arrêt, aucun instantané écrit", async (t) => {
+  const before = readdirSync(dataDir).length;
+  server.brokenResponses = true;
+  try {
+    await assert.rejects(quiet(t, () => sync(id(1), { force: true })), /Réponse inattendue de l'API Docs/);
+  } finally {
+    server.brokenResponses = false;
+  }
+  assert.equal(readdirSync(dataDir).length, before);
+});
+
 test('429 isolé : une pause de la durée Retry-After, puis la synchronisation reprend', async (t) => {
   server.throttle = 1;
   const start = Date.now();

@@ -90,6 +90,8 @@ export interface FakeServer {
    * produit par le serveur (`formatted-content`).
    */
   formattedContent?: boolean;
+  /** Le document racine répond `{}` (serveur qui n'est pas Docs, proxy qui réécrit…). */
+  brokenResponses?: boolean;
   /** Nombre de réponses 429 à renvoyer avant de répondre normalement (`Infinity` : toujours). */
   throttle?: number;
   /** Nombre de requêtes servies avant de répondre 429 à toutes les suivantes. */
@@ -132,6 +134,7 @@ export async function startFakeDocs(): Promise<FakeServer> {
       return send(200, { id: m[1], title: docs[m[1]].title, content: `Markdown serveur de ${docs[m[1]].title}, voir [lien](${state.url}/docs/${id(5)}/)\n` });
     }
     m = u.pathname.match(/^\/api\/v1.0\/documents\/([^/]+)\/$/);
+    if (m && state.brokenResponses) return send(200, {});
     if (m && docs[m[1]]) {
       if (state.formattedContent) return send(200, meta(m[1]));
       return send(200, { ...meta(m[1]), content: encode(docs[m[1]].content) });
