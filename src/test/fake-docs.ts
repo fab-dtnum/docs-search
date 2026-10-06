@@ -92,6 +92,10 @@ export interface FakeServer {
   formattedContent?: boolean;
   /** Le document racine répond `{}` (serveur qui n'est pas Docs, proxy qui réécrit…). */
   brokenResponses?: boolean;
+  /** Nombre de réponses 429 à renvoyer avant de répondre normalement (`Infinity` : toujours). */
+  throttle?: number;
+  /** Nombre de requêtes servies avant de répondre 429 à toutes les suivantes. */
+  throttleAfter?: number;
   close(): Promise<void>;
 }
 
@@ -106,6 +110,12 @@ export async function startFakeDocs(): Promise<FakeServer> {
       res.end(JSON.stringify(body));
     };
     if (req.headers.cookie !== `docs_sessionid=${SESSION}`) return send(401, { detail: 'auth' });
+    if (state.throttleAfter !== undefined && state.throttleAfter-- <= 0) state.throttle = 1;
+    if (state.throttle) {
+      state.throttle--;
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+      return res.end(JSON.stringify({ detail: 'Request was throttled. Expected available in 1 second.' }));
+    }
     const u = new URL(req.url ?? '/', state.url);
     if (u.pathname === '/api/v1.0/users/me/') return send(200, { email: 'test@example.org' });
 

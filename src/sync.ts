@@ -1,14 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, posix, resolve, sep } from 'node:path';
-import { AuthError, type DocMeta, getDoc, getFormattedMarkdown, getMe, listChildren } from './api.ts';
-import { config, docUrl } from './config.ts';
+import { AuthError, type DocMeta, RateLimitError, getDoc, getFormattedMarkdown, getMe, listChildren } from './api.ts';
+import { config, docUrl, UserError } from './config.ts';
 import {
   formatDate,
   latestSnapshot,
   type Manifest,
   type ManifestEntry,
   META_DIR,
+  type PartialSync,
+  partialDir,
   readManifest,
+  readPartial,
   snapshotName,
 } from './snapshots.ts';
 import { yjsToMarkdown } from './yjs-to-markdown.ts';
@@ -19,7 +22,8 @@ interface Node {
   entry: ManifestEntry;
   /** Markdown brut, avant réécriture des liens internes. */
   body: string;
-  copied: boolean;
+  /** Téléchargé, recopié de l'instantané précédent, ou repris d'une synchronisation interrompue. */
+  origin: 'fetched' | 'copied' | 'resumed';
 }
 
 export interface SyncResult {
@@ -33,6 +37,20 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
 
   const root = await getDoc(rootId);
   const source: ContentSource = 'content' in root ? 'yjs' : 'formatted-content';
+
+  // Synchronisation interrompue : ses documents sont réutilisés s'ils n'ont pas changé depuis.
+  const partial = openPartial(rootId, root.title?.trim() || 'Sans titre', force);
+  if (partial.done.size) {
+    console.log(
+      `Reprise de la synchronisation interrompue du ${formatDate(partial.startedAt)} : ` +
+        `${partial.done.size} document(s) déjà téléchargé(s).`,
+    );
+  }
+  // Réutilisé seulement s'il est au journal et inchangé dans Docs (updated_at de la liste des enfants).
+  const resumedRaw = (meta: DocMeta) =>
+    partial.done.get(meta.id) === meta.updated_at
+      ? readFileSync(join(partial.dir, 'raw', `${meta.id}.md`), 'utf8')
+      : undefined;
 
   // Instantané précédent : permet de recopier les documents inchangés.
   const previous = force ? undefined : latestSnapshot(rootId);
@@ -49,10 +67,17 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
   let name = snapshotName(rootId, now);
   for (let i = 2; existsSync(join(config.dataDir, name)); i++) name = `${snapshotName(rootId, now)}-${i}`;
   const finalDir = join(config.dataDir, name);
-  const tmpDir = join(config.dataDir, `.${name}.partial`);
+  const tmpDir = join(config.dataDir, `.${name}.writing`);
 
   const nodes: Node[] = [];
-  const limit = createLimiter(config.concurrency);
+  const limiter = createLimiter(config.concurrency);
+  // Première erreur fatale : plus aucune requête ensuite, les autres branches s'arrêtent d'elles-mêmes.
+  let aborted: { error: unknown } | undefined;
+  const limit = <T>(fn: () => Promise<T>) =>
+    limiter(() => {
+      if (aborted) throw aborted.error;
+      return fn();
+    });
   let done = 0;
   const progress = () => {
     if (process.stderr.isTTY) process.stderr.write(`\r${++done} document(s) traité(s)…`);
@@ -74,18 +99,26 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
       file,
       url: docUrl(meta.id),
     };
-    const node: Node = { entry, body: '', copied: false };
+    const node: Node = { entry, body: '', origin: 'fetched' };
     nodes.push(node);
 
-    const cached = prevById.get(meta.id)?.updated_at === meta.updated_at ? prevRaw(meta.id) : undefined;
-    if (cached !== undefined) {
-      node.body = cached;
-      node.copied = true;
+    const resumed = resumedRaw(meta);
+    const copied = prevById.get(meta.id)?.updated_at === meta.updated_at ? prevRaw(meta.id) : undefined;
+    if (resumed !== undefined) {
+      node.body = resumed;
+      node.origin = 'resumed';
+    } else if (copied !== undefined) {
+      node.body = copied;
+      node.origin = 'copied';
     } else {
       try {
-        node.body = await limit(async () => fetchBody(full ?? (await getDoc(meta.id)), source));
+        // `formatted-content` n'a besoin que de l'id : pas de lecture du document, une requête de moins.
+        node.body = await limit(async () =>
+          fetchBody(full ?? (source === 'yjs' ? await getDoc(meta.id) : meta), source),
+        );
+        recordPartial(partial, meta, node.body);
       } catch (e) {
-        if (e instanceof AuthError) throw e;
+        if (e instanceof AuthError || e instanceof RateLimitError) throw (aborted ??= { error: e }).error;
         entry.error = (e as Error).message;
       }
     }
@@ -96,15 +129,21 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
         const list: DocMeta[] = [];
         for await (const child of listChildren(meta.id)) list.push(child);
         return list;
+      }).catch((e) => {
+        throw (aborted ??= { error: e }).error;
       });
       const childDir = file.slice(0, -'.md'.length);
       const files = children.map((c) => fileFor(c, childDir));
-      await Promise.all(children.map((c, i) => visit(c, meta.id, files[i])));
+      // Toutes les branches terminées avant de rendre la main : le journal de reprise est alors complet.
+      const results = await Promise.allSettled(children.map((c, i) => visit(c, meta.id, files[i])));
+      if (results.some((r) => r.status === 'rejected')) throw aborted!.error;
     }
   }
 
   try {
     await visit(root, null, fileFor(root, ''), root);
+  } catch (e) {
+    throw interrupted(e, rootId, partial);
   } finally {
     if (process.stderr.isTTY) process.stderr.write('\n');
   }
@@ -121,9 +160,47 @@ export async function sync(rootId: string, { force = false } = {}): Promise<Sync
     mode: FILE_MODE,
   });
   renameSync(tmpDir, finalDir);
+  rmSync(partial.dir, { recursive: true, force: true });
 
   printSummary(nodes, finalDir, previous?.name);
   return { dir: finalDir, manifest };
+}
+
+function openPartial(rootId: string, rootTitle: string, force: boolean): PartialSync {
+  const dir = partialDir(rootId);
+  if (force) rmSync(dir, { recursive: true, force: true });
+  const existing = readPartial(rootId);
+  if (existing) return existing;
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(join(dir, 'raw'), { recursive: true, mode: DIR_MODE });
+  const startedAt = new Date();
+  writeFileSync(join(dir, 'partial.json'), JSON.stringify({ rootId, rootTitle, startedAt }), { mode: FILE_MODE });
+  return { dir, rootId, rootTitle, startedAt, done: new Map() };
+}
+
+/** Le fichier d'abord, la ligne du journal ensuite : un fichier sans ligne (arrêt brutal) est retéléchargé. */
+function recordPartial(partial: PartialSync, meta: DocMeta, body: string): void {
+  writeFileSync(join(partial.dir, 'raw', `${meta.id}.md`), body, { mode: FILE_MODE });
+  const line = JSON.stringify({ id: meta.id, updated_at: meta.updated_at });
+  appendFileSync(join(partial.dir, 'journal.jsonl'), `${line}\n`, { mode: FILE_MODE });
+  partial.done.set(meta.id, meta.updated_at);
+}
+
+/** Erreur d'une synchronisation interrompue, complétée de la marche à suivre pour reprendre. */
+function interrupted(e: unknown, rootId: string, partial: PartialSync): unknown {
+  if (!partial.done.size) {
+    rmSync(partial.dir, { recursive: true, force: true });
+    return e;
+  }
+  const hint =
+    `${partial.done.size} document(s) déjà téléchargé(s) sont conservés. ` +
+    `Relancez \`pnpm docs:sync ${rootId}\` pour reprendre là où la synchronisation s'est arrêtée.`;
+  if (!(e instanceof UserError)) {
+    console.error(hint);
+    return e;
+  }
+  e.message += `\n\n${hint}`;
+  return e;
 }
 
 async function fetchBody(doc: DocMeta, source: ContentSource): Promise<string> {
@@ -172,10 +249,12 @@ function rewriteDocLinks(body: string, from: string, fileById: Map<string, strin
 
 function printSummary(nodes: Node[], dir: string, previousName?: string): void {
   const subs = nodes.length - 1;
-  const copied = nodes.filter((n) => n.copied).length;
+  const copied = nodes.filter((n) => n.origin === 'copied').length;
+  const resumed = nodes.filter((n) => n.origin === 'resumed').length;
   const errors = nodes.filter((n) => n.entry.error);
 
   console.log(`\n${nodes.length} document(s) récupéré(s) : 1 document + ${subs} sous-document(s).`);
+  if (resumed) console.log(`  dont ${resumed} repris de la synchronisation interrompue`);
   if (copied) console.log(`  dont ${copied} inchangé(s), recopié(s) depuis ${previousName}`);
   if (errors.length) {
     console.log(`  dont ${errors.length} en erreur :`);

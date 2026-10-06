@@ -3,11 +3,12 @@ import { relative } from 'node:path';
 import { parseDocId, UserError } from './config.ts';
 import { applyEnvProxyToFetch } from './proxy.ts';
 import { search, type SyncMode } from './search.ts';
-import { formatDate, listSnapshots, readManifest } from './snapshots.ts';
+import { formatDate, listPartials, listSnapshots, readManifest } from './snapshots.ts';
 
 const USAGE = `Usage :
   pnpm docs:login [--browser chromium|firefox]       Connexion ProConnect, enregistre la session dans .env
   pnpm docs:sync <doc_id|url> [--force]             Télécharge le document et ses sous-documents (instantané daté)
+                                                      Reprend une synchronisation interrompue ; --force repart de zéro
   pnpm docs:search <doc_id|url> [--sync|--no-sync] <arguments ripgrep…>
                                                       Recherche ripgrep dans l'instantané du jour
   pnpm docs:list                                    Instantanés locaux
@@ -40,13 +41,20 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'list': {
       const snaps = listSnapshots();
-      if (!snaps.length) console.log('Aucun instantané.');
+      const partials = listPartials();
+      if (!snaps.length && !partials.length) console.log('Aucun instantané.');
       for (const s of snaps) {
         const m = readManifest(s.dir);
         const rel = relative(process.cwd(), s.dir);
         console.log(
           `${formatDate(s.date)}  ${String(m.documents.length).padStart(4)} doc(s)  ${m.rootTitle}\n` +
             `  ${rel.startsWith('..') ? s.dir : rel}`,
+        );
+      }
+      for (const p of partials) {
+        console.log(
+          `${formatDate(p.startedAt)}  ${String(p.done.size).padStart(4)} doc(s)  ${p.rootTitle}  (interrompu)\n` +
+            `  reprendre : pnpm docs:sync ${p.rootId}`,
         );
       }
       return 0;

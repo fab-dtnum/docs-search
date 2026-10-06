@@ -6,6 +6,16 @@ export class AuthError extends UserError {
   }
 }
 
+export class RateLimitError extends UserError {
+  constructor(retryAfter: number) {
+    super(
+      `Docs limite le débit des requêtes (HTTP 429, disponible dans ${retryAfter} s). ` +
+        'Synchronisation interrompue pour ne pas insister. ' +
+        'Relancez dans une minute, ou baissez DOCS_RATE_PER_MINUTE.',
+    );
+  }
+}
+
 export class HttpError extends Error {
   readonly status: number;
   constructor(status: number, path: string) {
@@ -32,6 +42,32 @@ interface Page<T> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TIMEOUT_MS = 30_000;
+const MAX_RETRY_AFTER_S = 120;
+/** Marge ajoutée au `Retry-After` du serveur, pour ne pas revenir pile à la limite. */
+const RETRY_MARGIN_S = 5;
+
+/**
+ * Espacement des requêtes, partagé par tous les appels en parallèle : au plus
+ * `config.ratePerMinute` requêtes par minute. Une réponse 429 repousse le prochain
+ * créneau de tous les appels de la durée indiquée par `Retry-After`, plus une marge.
+ */
+let nextSlot = 0;
+/** Après un 429 persistant, plus aucune requête avant la fin du blocage : les appels en attente échouent aussitôt. */
+let blockedUntil = 0;
+async function waitForSlot(): Promise<void> {
+  const now = Date.now();
+  const slot = Math.max(now, nextSlot);
+  nextSlot = slot + 60_000 / config.ratePerMinute;
+  if (slot > now) await sleep(slot - now);
+}
+
+/** `Retry-After` en secondes ou en date HTTP ; 60 s si absent ou illisible. */
+function retryAfterSeconds(res: Response): number {
+  const raw = res.headers.get('retry-after');
+  if (raw === null) return 60;
+  const s = /^\d+$/.test(raw.trim()) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
+  return Number.isFinite(s) ? Math.max(1, Math.ceil(s)) : 60;
+}
 
 /**
  * URL absolue d'un appel API. Les liens `next` de pagination viennent du serveur :
@@ -72,6 +108,8 @@ function networkErrorMessage(code: string): string {
 async function request<T>(path: string, sessionId = requireSession()): Promise<T> {
   const url = apiUrl(path);
   for (let attempt = 0; ; attempt++) {
+    await waitForSlot();
+    if (Date.now() < blockedUntil) throw new RateLimitError(Math.ceil((blockedUntil - Date.now()) / 1000));
     let res: Response;
     try {
       res = await fetch(url, {
@@ -90,7 +128,19 @@ async function request<T>(path: string, sessionId = requireSession()): Promise<T
       throw new UserError(networkErrorMessage(code));
     }
     if (res.status === 401 || res.status === 403) throw new AuthError();
-    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+    if (res.status === 429) {
+      const retryAfter = retryAfterSeconds(res);
+      const wait = retryAfter + RETRY_MARGIN_S;
+      // Une seule nouvelle tentative, après le délai demandé : insister aggraverait le blocage.
+      if (attempt > 0 || retryAfter > MAX_RETRY_AFTER_S) {
+        blockedUntil = Date.now() + wait * 1000;
+        throw new RateLimitError(retryAfter);
+      }
+      if (process.stderr.isTTY) process.stderr.write(`\nDocs limite le débit : pause de ${wait} s…\n`);
+      nextSlot = Math.max(nextSlot, Date.now() + wait * 1000);
+      continue;
+    }
+    if (res.status >= 500 && attempt < 3) {
       await sleep(1000 * 2 ** attempt);
       continue;
     }
