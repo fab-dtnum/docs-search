@@ -12,6 +12,16 @@ export interface ManifestEntry {
   file: string;
   url: string;
   error?: string;
+  /** Pièces jointes (images, PDF…) liées depuis le document. */
+  attachments?: AttachmentEntry[];
+}
+
+export interface AttachmentEntry {
+  /** Chemin `/media/…` sur Docs. */
+  media: string;
+  /** Copie locale, relative à la racine de l'instantané (absente en cas d'erreur). */
+  file?: string;
+  error?: string;
 }
 
 export interface Manifest {
@@ -59,6 +69,8 @@ export const latestSnapshot = (rootId: string) => listSnapshots(rootId).at(-1);
  * Chaque document téléchargé y est écrit aussitôt (`raw/<id>.md`), puis noté dans
  * `journal.jsonl` avec son `updated_at`. Le journal est écrit après le fichier :
  * un fichier sans ligne (arrêt pendant l'écriture) est ignoré et retéléchargé.
+ * Les pièces jointes vont dans `attachments/`, sous un nom fixe tiré de leur chemin
+ * `/media/…` ; écrites sous un nom temporaire puis renommées, elles sont complètes dès qu'elles existent.
  */
 export interface PartialSync {
   dir: string;

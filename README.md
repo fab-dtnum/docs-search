@@ -77,7 +77,7 @@ pnpm docs:list                             # instantanés locaux
 
 Les scripts sont préfixés par `docs:` : `pnpm login`, `pnpm list` et `pnpm search` sont des commandes de pnpm lui-même (registre npm), et aucune commande de pnpm ne contient `:`.
 
-- **sync** affiche le nombre de documents récupérés (1 document + N sous-documents) et la date de la dernière modification d'un sous-document. Les documents dont `updated_at` n'a pas changé sont recopiés depuis l'instantané précédent au lieu d'être retéléchargés.
+- **sync** affiche le nombre de documents récupérés (1 document + N sous-documents) la date de la dernière modification d'un sous-document et la durée de la synchronisation. Les documents dont `updated_at` n'a pas changé sont recopiés depuis l'instantané précédent au lieu d'être retéléchargés.
 - **Reprise après interruption** (limite de débit, coupure réseau, Ctrl-C, plantage) : chaque document téléchargé est enregistré aussitôt dans `data/.<id>.partial/`. Relancer `pnpm docs:sync <doc>` reprend là où la synchronisation s'est arrêtée : la liste des enfants est relue, et un document déjà téléchargé n'est réutilisé que s'il figure au journal de la reprise et que son `updated_at` n'a pas changé. Seuls les documents manquants ou modifiés sont retéléchargés. Le journal est écrit après chaque fichier : un fichier interrompu en cours d'écriture n'y figure pas et sera retéléchargé. `pnpm docs:list` signale les synchronisations interrompues.
 - **search** transmet tous les arguments qui suivent `<doc>` à `rg` (syntaxe ripgrep), puis affiche les liens vers Docs des documents trouvés.
   - Si l'instantané le plus récent ne date pas d'aujourd'hui, le script donne sa date et propose de retélécharger.
@@ -89,7 +89,8 @@ Les scripts sont préfixés par `docs:` : `pnpm login`, `pnpm list` et `pnpm sea
 ```
 data/<id>-2026-10-05-14h30/
 ├── Projet X.md            # en-tête YAML : id, title, url, updated_at
-├── Projet X/              # sous-documents de « Projet X »
+├── Projet X/              # sous-documents et pièces jointes de « Projet X »
+│   ├── schéma.png         # image ou fichier (PDF…) inséré dans « Projet X »
 │   ├── Réunions.md
 │   ├── Réunions/
 │   │   └── CR du 12-09.md
@@ -98,6 +99,8 @@ data/<id>-2026-10-05-14h30/
 ```
 
 Les liens entre documents Docs sont réécrits en liens relatifs, ce qui permet de naviguer dans Obsidian.
+
+Les images et fichiers (PDF…) insérés dans un document sont téléchargés dans le dossier qui porte le nom du `.md`, à côté des sous-documents, sous le nom affiché dans Docs. Les liens sont réécrits vers ces copies : les images s'affichent dans Obsidian. Une pièce jointe déjà présente dans l'instantané précédent y est recopiée, sans nouveau téléchargement : Docs ne modifie jamais un fichier envoyé, chaque envoi (y compris le remplacement d'une image) crée un nouveau chemin `/media/<doc>/attachments/<uuid>.<ext>`. Un chemin d'une autre forme est retéléchargé à chaque fois. Une pièce jointe qui n'a pas pu être téléchargée garde son lien vers Docs ; elle est signalée à la fin de `sync` et dans le manifest.
 
 ## Variables d'environnement (`.env`)
 
